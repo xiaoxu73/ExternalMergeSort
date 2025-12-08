@@ -1,0 +1,60 @@
+# 编译产物
+*.o
+*.obj
+*.exe
+*.exe~
+*.bin
+*.out
+
+# 构建目录
+build/
+cmake-build-*/
+
+# 测试相关
+test_data*/
+sorted_output.dat
+*.tmp
+*.temp
+
+# IDE相关
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 日志文件
+*.log
+
+# Valgrind输出
+valgrind.out.*
+
+# GDB相关
+*.gdb
+*.gdbs
+
+# CMake相关
+CMakeCache.txt
+CMakeFiles/
+Makefile.cmake
+cmake_install.cmake
+compile_commands.json
+
+# Google Test下载的文件
+googletest*/
+googlemock*/
+
+# Git相关
+.git/
+
+# 备份文件
+*~
+.*.swp
+.*.swo
+
+# Coverage相关
+*.gcda
+*.gcno
+*.gcov
+
+# Doc相关
+doxygen/
