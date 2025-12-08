@@ -15,19 +15,32 @@ ExternalMergeSorter::ExternalMergeSorter(const std::string& input_dir,
       output_file_(output_file),
       memory_limit_(memory_limit) {
     // 线程数量等于CPU核心数
-    size_t num_threads = std::thread::hardware_concurrency();
-    if (num_threads == 0) num_threads = 4; // 默认值
+    num_threads_ = std::thread::hardware_concurrency();
+    if (num_threads_ == 0) num_threads_ = 32; // 默认值
     
     // 创建线程池
-    thread_pool_ = std::make_unique<ThreadPool>(num_threads);
+    thread_pool_ = std::make_unique<ThreadPool>(num_threads_);
+    std::cout << "线程池创建成功，线程数: " << num_threads_ << std::endl;
 }
 
 void ExternalMergeSorter::sort() {
     std::cout << "开始分割和预排序阶段..." << std::endl;
+    auto start_time = std::chrono::high_resolution_clock::now();
+    
     auto chunks = splitAndPresort();
+
+    auto end_time = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+    std::cout << "分割和预排序完成，耗时: " << duration.count() << "ms" << std::endl;
     
     std::cout << "开始多路归并阶段..." << std::endl;
+    start_time = std::chrono::high_resolution_clock::now();
+
     mergeChunks(chunks);
+
+    end_time = std::chrono::high_resolution_clock::now();
+    duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+    std::cout << "多路归并完成，耗时: " << duration.count() << "ms" << std::endl;
     
     // 清理临时文件
     for (const auto& chunk : chunks) {
@@ -43,9 +56,8 @@ std::vector<ExternalMergeSorter::ChunkInfo> ExternalMergeSorter::splitAndPresort
         return {};
     }
 
-    const size_t num_threads = std::thread::hardware_concurrency();
-    if (num_threads == 0) {
-        // 如果无法获取线程数，按单线程处理
+    if (num_threads_ == 0) {
+        // 单线程处理
         std::vector<ChunkInfo> chunks;
         for (const auto& file : files) {
             chunks.push_back(processFile(file));
@@ -54,7 +66,7 @@ std::vector<ExternalMergeSorter::ChunkInfo> ExternalMergeSorter::splitAndPresort
     }
 
     // 按批次提交任务，避免一次性创建过多future对象，并实现更好的负载均衡
-    const size_t batch_size = std::max(static_cast<size_t>(1), files.size() / (num_threads * 2));
+    const size_t batch_size = std::max(static_cast<size_t>(1), files.size() / (num_threads_ * 2));
     
     std::vector<ChunkInfo> chunks;
     for (size_t i = 0; i < files.size(); i += batch_size) {
@@ -78,7 +90,7 @@ std::vector<ExternalMergeSorter::ChunkInfo> ExternalMergeSorter::splitAndPresort
 
 ExternalMergeSorter::ChunkInfo ExternalMergeSorter::processFile(const std::string& filepath) {
     // 使用一半的内存限制，为其他操作留出空间
-    size_t max_elements = memory_limit_ / sizeof(int64_t);
+    size_t max_elements = memory_limit_ / (num_threads_ * sizeof(int64_t));
     std::vector<int64_t> buffer;
     buffer.reserve(max_elements);
     
@@ -163,7 +175,7 @@ void ExternalMergeSorter::mergeChunks(const std::vector<ChunkInfo>& chunks) {
         return;
     }
     
-    // 如果chunks数量较少，直接进行多路归并
+    // 如果chunks数量较少，直接单线程多路归并
     if (chunks.size() <= 128) {
         std::vector<std::string> filenames;
         for (const auto& chunk : chunks) {
@@ -173,16 +185,22 @@ void ExternalMergeSorter::mergeChunks(const std::vector<ChunkInfo>& chunks) {
         return;
     }
     
-    // 如果chunks数量很多，采用分层合并策略
+    // 如果chunks数量很多，采用多线程分层并归策略
     std::vector<std::string> current_files;
     for (const auto& chunk : chunks) {
         current_files.push_back(chunk.temp_file);
     }
     
-    size_t round = 0;
+    // 循环合并直到只剩一个文件
+    size_t round = 0;   // 合并轮数
     while (current_files.size() > 1) {
-        std::vector<std::string> next_round_files;
+        std::vector<std::string> next_round_files; // 下一轮的文件列表
         const size_t merge_factor = 128; // 每轮最多合并128个文件
+        
+        // 使用线程池并行处理多个合并任务
+        std::vector<std::future<void>> merge_futures;
+        std::vector<std::vector<std::string>> files_groups;
+        std::vector<std::string> output_files;
         
         for (size_t i = 0; i < current_files.size(); i += merge_factor) {
             size_t end = std::min(i + merge_factor, current_files.size());
@@ -192,15 +210,32 @@ void ExternalMergeSorter::mergeChunks(const std::vector<ChunkInfo>& chunks) {
                 // 单个文件无需合并
                 next_round_files.push_back(files_to_merge[0]);
             } else {
-                // 合并这一组文件
-                std::string intermediate_file = output_file_ + ".intermediate" + std::to_string(round) + "_" + std::to_string(i);
-                mergeFiles(files_to_merge, intermediate_file);
-                next_round_files.push_back(intermediate_file);
-                
-                // 删除已合并的源文件以节省空间
-                for (const auto& file : files_to_merge) {
-                    fs::remove(file);
-                }
+                // 准备并行合并任务
+                std::string intermediate_file = output_file_ + ".intermediate" + "_r" + std::to_string(round) + "_g" + std::to_string(i);
+                output_files.push_back(intermediate_file);
+                files_groups.push_back(std::move(files_to_merge));
+            }
+        }
+        
+        // 提交并行任务
+        for (size_t i = 0; i < files_groups.size(); ++i) {
+            auto future = thread_pool_->submit([this, files_group = std::move(files_groups[i]) , output_file = std::move(output_files[i])]() {
+                this->mergeFiles(files_group, output_file);
+            });
+            merge_futures.push_back(std::move(future));
+        }
+        
+        // 等待所有并行任务完成
+        for (auto& future : merge_futures) {
+            future.wait();
+        }
+        
+        // 收集结果并清理源文件
+        for (size_t i = 0; i < files_groups.size(); ++i) {
+            next_round_files.push_back(output_files[i]);
+            // 删除已合并的源文件以节省空间
+            for (const auto& file : files_groups[i]) {
+                fs::remove(file);
             }
         }
         

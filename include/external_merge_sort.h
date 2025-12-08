@@ -38,6 +38,7 @@ private:
     std::string output_file_;
     size_t memory_limit_;
     std::unique_ptr<ThreadPool> thread_pool_;
+    size_t num_threads_;
 };
 
 #endif // EXTERNAL_MERGE_SORT_H

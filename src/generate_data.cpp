@@ -17,7 +17,7 @@ void generate_test_data(const std::string& dir, size_t num_files, size_t total_g
     size_t avg_elements_per_file = total_elements / num_files;
     
     std::cout << "生成测试数据:" << std::endl;
-    std::cout << "- 总计 " << total_gb << " GB 数据" << std::endl;
+    std::cout << "- 总计约 " << total_gb << " GB 数据" << std::endl;
     std::cout << "- 分散在 " << num_files << " 个文件中" << std::endl;
     std::cout << "- 平均每文件约 " << avg_elements_per_file << " 个元素" << std::endl;
     

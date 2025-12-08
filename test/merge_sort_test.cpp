@@ -270,7 +270,8 @@ TEST_F(ExternalMergeSortTest, ManyFiles) {
     double mem_before = get_memory_usage_mb();
     auto start_time = std::chrono::high_resolution_clock::now();
 
-    ExternalMergeSorter sorter(test_dir, output_file, 32 * 1024 * 1024); // 32MB内存限制
+    // ExternalMergeSorter sorter(test_dir, output_file, 32 * 1024 * 1024); // 32MB内存限制
+    ExternalMergeSorter sorter(test_dir, output_file, 4 * 1024); // 4KB内存限制
     sorter.sort();
 
     auto end_time = std::chrono::high_resolution_clock::now();
@@ -370,15 +371,12 @@ TEST_F(ExternalMergeSortTest, PreSortedData) {
 
 // 测试使用generate_test_data函数创建的大数据集
 TEST_F(ExternalMergeSortTest, LargeRandomDataset) {
-    std::cout << "\n=== 测试使用generate_test_data函数创建的大数据集 ===" << std::endl;
+    std::cout << "\n=== 测试使用generate_test_data函数创建的超大数据集 ===" << std::endl;
     
     // 使用generate_test_data函数生成大数据集
     // 生成约1GB的数据，分布在10000个文件中
     const size_t FILE_COUNT = 10000;
     const size_t TOTAL_GB = 1; // 1GB的数据集
-    
-    std::cout << "文件数量: " << FILE_COUNT << std::endl;
-    std::cout << "总数据大小: " << TOTAL_GB << " GB" << std::endl;
     
     // 生成测试数据
     generate_test_data(test_dir, FILE_COUNT, TOTAL_GB);
@@ -392,7 +390,7 @@ TEST_F(ExternalMergeSortTest, LargeRandomDataset) {
     }
     
     std::cout << "总元素数: " << total_elements << std::endl;
-    std::cout << "预计数据大小: " << (total_elements * sizeof(int64_t)) / (1024*1024) << " MB" << std::endl;
+    std::cout << "生成数据大小: " << (total_elements * sizeof(int64_t)) / (1024*1024) << " MB" << std::endl;
 
     double mem_before = get_memory_usage_mb();
     auto start_time = std::chrono::high_resolution_clock::now();
@@ -416,6 +414,4 @@ TEST_F(ExternalMergeSortTest, LargeRandomDataset) {
     // 验证元素总数一致
     size_t output_elements = count_file_elements(output_file);
     EXPECT_EQ(total_elements, output_elements);
-    
-    std::cout << "输出文件元素数: " << output_elements << std::endl;
 }
