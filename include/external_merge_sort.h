@@ -25,7 +25,7 @@ private:
     std::vector<ChunkInfo> splitAndPresort();
     
     // 处理单个文件
-    ChunkInfo processFile(const std::string& filepath);
+    std::vector<ExternalMergeSorter::ChunkInfo> processFile(const std::string& filepath);
     
     // 第二阶段：多路归并
     void mergeChunks(const std::vector<ChunkInfo>& chunks);
