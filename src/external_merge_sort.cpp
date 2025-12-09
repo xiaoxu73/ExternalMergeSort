@@ -198,10 +198,11 @@ void ExternalMergeSorter::mergeChunks(const std::vector<ChunkInfo>& chunks) {
         const size_t merge_factor = 128; // 每轮最多合并128个文件
         
         // 使用线程池并行处理多个合并任务
-        std::vector<std::future<void>> merge_futures;
-        std::vector<std::vector<std::string>> files_groups;
-        std::vector<std::string> output_files;
+        std::vector<std::future<std::pair<std::vector<std::string>, std::string>>> merge_futures;  // 保存每个合并任务的future，以便等待完成
+        std::vector<std::vector<std::string>> files_groups;  // 每组文件的列表
+        std::vector<std::string> intermediate_files;  // 每组合并后的输出文件名
         
+        // 将当前文件分组，每组进行合并
         for (size_t i = 0; i < current_files.size(); i += merge_factor) {
             size_t end = std::min(i + merge_factor, current_files.size());
             std::vector<std::string> files_to_merge(current_files.begin() + i, current_files.begin() + end);
@@ -211,30 +212,34 @@ void ExternalMergeSorter::mergeChunks(const std::vector<ChunkInfo>& chunks) {
                 next_round_files.push_back(files_to_merge[0]);
             } else {
                 // 准备并行合并任务
-                std::string intermediate_file = output_file_ + ".intermediate" + "_r" + std::to_string(round) + "_g" + std::to_string(i);
-                output_files.push_back(intermediate_file);
+                std::string intermediate_file = output_file_ + ".intermediate" + "_r" + std::to_string(round) + 
+                    "_g" + std::to_string(files_groups.size()) + "_" + std::to_string(i);
+                intermediate_files.push_back(intermediate_file);
                 files_groups.push_back(std::move(files_to_merge));
             }
         }
         
         // 提交并行任务
         for (size_t i = 0; i < files_groups.size(); ++i) {
-            auto future = thread_pool_->submit([this, files_group = std::move(files_groups[i]) , output_file = std::move(output_files[i])]() {
+            auto future = thread_pool_->submit([this, files_group = std::move(files_groups[i]), 
+                                               output_file = std::move(intermediate_files[i])]() {
                 this->mergeFiles(files_group, output_file);
+                // 返回需要删除的源文件列表，生成的中间文件
+                return std::make_pair(std::move(files_group), std::move(output_file));
             });
             merge_futures.push_back(std::move(future));
         }
         
-        // 等待所有并行任务完成
+        // 等待所有并行任务完成，
+        std::vector<std::pair<std::vector<std::string>, std::string>> merge_results;
         for (auto& future : merge_futures) {
-            future.wait();
+            merge_results.push_back(future.get());
         }
         
-        // 收集结果并清理源文件
-        for (size_t i = 0; i < files_groups.size(); ++i) {
-            next_round_files.push_back(output_files[i]);
-            // 删除已合并的源文件以节省空间
-            for (const auto& file : files_groups[i]) {
+        // 收集结果文件用于下一轮处理,并删除已合并的源文件
+        for (const auto& result : merge_results) {
+            next_round_files.push_back(result.second);
+            for (const auto& file : result.first) {
                 fs::remove(file);
             }
         }

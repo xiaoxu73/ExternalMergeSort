@@ -6,6 +6,9 @@
 *.bin
 *.out
 
+# 可执行文件
+bin/
+
 # 构建目录
 build/
 cmake-build-*/

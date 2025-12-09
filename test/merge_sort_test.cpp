@@ -257,7 +257,7 @@ TEST_F(ExternalMergeSortTest, SmallMemoryLimit) {
 
 // 测试大量文件的情况
 TEST_F(ExternalMergeSortTest, ManyFiles) {
-    const size_t FILE_COUNT = 50;  // 50个文件
+    const size_t FILE_COUNT = 200;  // 200个文件
     const size_t ELEMENTS_PER_FILE = 1000;
 
     std::cout << "\n=== 测试大量文件处理 ===" << std::endl;
