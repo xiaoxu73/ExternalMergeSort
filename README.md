@@ -2,6 +2,25 @@
 
 该系统用于对海量数据进行外部排序，特别适用于内存受限环境下的大数据处理。
 
+## 项目结构
+
+```
+.
+├── bin/                 # 编译后的可执行文件目录
+│   └── merge_sort_tests # 测试可执行文件
+├── include/             # 头文件目录
+│   ├── external_merge_sort.h  # 外部排序类声明
+│   └── thread_pool.h          # 线程池类声明
+├── src/                 # 源代码目录
+│   ├── external_merge_sort.cpp  # 外部排序类实现
+│   ├── generate_data.cpp        # 测试数据生成器实现
+│   └── thread_pool.cpp          # 线程池类实现
+├── test/                # 测试代码目录
+│   └── merge_sort_test.cpp      # Google Test测试用例
+├── CMakeLists.txt       # CMake构建配置文件
+└── README.md            # 项目说明文档
+```
+
 ## 功能特点
 
 1. **线程池支持**: 利用多核CPU提高排序效率
@@ -25,6 +44,12 @@
 ### 锁优化策略
 - 粗粒度锁：任务队列操作使用互斥锁
 - 免锁/无锁：数据处理阶段各线程独立工作，无需同步
+
+## 可执行文件说明
+
+目前项目提供以下可执行文件：
+
+1. **merge_sort_tests**: 包含完整的测试套件，用于验证系统的正确性和性能
 
 ## 编译说明
 
@@ -62,7 +87,7 @@ make test
 
 或者直接运行测试可执行文件：
 ```bash
-./merge_sort_tests
+./bin/merge_sort_tests
 ```
 
 每个测试用例都会输出详细的信息，包括：
