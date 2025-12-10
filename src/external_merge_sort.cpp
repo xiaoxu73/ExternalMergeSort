@@ -90,7 +90,8 @@ std::vector<ExternalMergeSorter::ChunkInfo> ExternalMergeSorter::splitAndPresort
 
 ExternalMergeSorter::ChunkInfo ExternalMergeSorter::processFile(const std::string& filepath) {
     // 使用一半的内存限制，为其他操作留出空间
-    size_t max_elements = memory_limit_ / (num_threads_ * sizeof(int64_t));
+    // size_t max_elements = memory_limit_ / (num_threads_ * sizeof(int64_t));
+    size_t max_elements = memory_limit_ / sizeof(int64_t);
     std::vector<int64_t> buffer;
     buffer.reserve(max_elements);
     
@@ -267,6 +268,12 @@ void ExternalMergeSorter::mergeFiles(const std::vector<std::string>& files, cons
     
     // 打开所有输入文件
     std::vector<std::ifstream> inputs(files.size());
+    // 为每个输入文件设置缓冲区
+    const size_t BUFFER_SIZE = memory_limit_ / (files.size() * sizeof(int64_t));
+    std::vector<std::vector<int64_t>> input_buffers(files.size());
+    std::vector<size_t> buffer_positions(files.size(), 0);
+    std::vector<size_t> buffer_sizes(files.size(), 0);
+    
     for (size_t i = 0; i < files.size(); ++i) {
         inputs[i].open(files[i], std::ios::binary);
         if (!inputs[i].is_open()) {
@@ -276,9 +283,11 @@ void ExternalMergeSorter::mergeFiles(const std::vector<std::string>& files, cons
             }
             throw std::runtime_error("无法打开文件: " + files[i]);
         }
+        // 初始化缓冲区
+        input_buffers[i].resize(BUFFER_SIZE);
     }
     
-    // 打开输出文件
+    // 打开输出文件并设置输出缓冲区
     std::ofstream output(output_file, std::ios::binary);
     if (!output.is_open()) {
         // 关闭所有已打开的输入文件
@@ -287,6 +296,9 @@ void ExternalMergeSorter::mergeFiles(const std::vector<std::string>& files, cons
         }
         throw std::runtime_error("无法创建输出文件: " + output_file);
     }
+    
+    std::vector<int64_t> output_buffer;
+    output_buffer.reserve(BUFFER_SIZE);
     
     // 使用最小堆进行k路归并
     struct Element {
@@ -300,11 +312,24 @@ void ExternalMergeSorter::mergeFiles(const std::vector<std::string>& files, cons
     
     std::priority_queue<Element, std::vector<Element>, std::greater<Element>> min_heap;
     
+    // 缓冲区填充函数
+    auto fillBuffer = [&](size_t stream_index) {
+        if (buffer_positions[stream_index] >= buffer_sizes[stream_index]) {
+            // 缓冲区已用完，需要从文件读取新数据
+            inputs[stream_index].read(reinterpret_cast<char*>(input_buffers[stream_index].data()), 
+                                     BUFFER_SIZE * sizeof(int64_t));
+            buffer_sizes[stream_index] = inputs[stream_index].gcount() / sizeof(int64_t);
+            buffer_positions[stream_index] = 0;
+        }
+    };
+    
     // 初始化堆，从每个文件读取第一个元素
-    for (size_t i = 0; i < inputs.size(); ++i) {
-        int64_t value;
-        if (inputs[i].read(reinterpret_cast<char*>(&value), sizeof(value))) {
-            min_heap.push({value, i});
+    for (size_t index = 0; index < files.size(); ++index) {
+        fillBuffer(index);
+        if (buffer_sizes[index] > 0) {
+            // 缓冲区中有数据，将第一个元素放入堆中
+            min_heap.push({input_buffers[index][buffer_positions[index]], index});
+            buffer_positions[index]++;
         }
     }
     
@@ -313,14 +338,27 @@ void ExternalMergeSorter::mergeFiles(const std::vector<std::string>& files, cons
         Element elem = min_heap.top();
         min_heap.pop();
         
-        // 写入当前最小元素到输出文件
-        output.write(reinterpret_cast<const char*>(&elem.value), sizeof(elem.value));
+        // 添加到输出缓冲区
+        output_buffer.push_back(elem.value);
+        if (output_buffer.size() >= BUFFER_SIZE) {
+            // 输出缓冲区满了，写入文件
+            output.write(reinterpret_cast<const char*>(output_buffer.data()), 
+                        output_buffer.size() * sizeof(int64_t));
+            output_buffer.clear();
+        }
         
         // 从相同文件流中读取下一个元素
-        int64_t next_value;
-        if (inputs[elem.stream_index].read(reinterpret_cast<char*>(&next_value), sizeof(next_value))) {
-            min_heap.push({next_value, elem.stream_index});
+        fillBuffer(elem.stream_index);
+        if (buffer_positions[elem.stream_index] < buffer_sizes[elem.stream_index]) {
+            min_heap.push({input_buffers[elem.stream_index][buffer_positions[elem.stream_index]], elem.stream_index});
+            buffer_positions[elem.stream_index]++;
         }
+    }
+    
+    // 写入剩余的输出缓冲区内容
+    if (!output_buffer.empty()) {
+        output.write(reinterpret_cast<const char*>(output_buffer.data()), 
+                    output_buffer.size() * sizeof(int64_t));
     }
     
     // 关闭所有文件
