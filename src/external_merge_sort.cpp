@@ -156,15 +156,12 @@ ExternalMergeSorter::ChunkInfo ExternalMergeSorter::processFile(const std::strin
     else if (chunk_files.size() > 1) {
         // 多个chunk，需要进行内部归并
         mergeFiles(chunk_files, temp_filename);
-        // 删除中间chunk文件
-        for (const auto& chunk_file : chunk_files) {
-            fs::remove(chunk_file);
-        }
     }
     
     return info;
 }
 
+// 多路归并多个已排序的文件到输出文件，支持多线程分层归并
 void ExternalMergeSorter::mergeChunks(const std::vector<ChunkInfo>& chunks) {
     if (chunks.empty()) {
         return;
@@ -175,9 +172,11 @@ void ExternalMergeSorter::mergeChunks(const std::vector<ChunkInfo>& chunks) {
         fs::copy_file(chunks[0].temp_file, output_file_, fs::copy_options::overwrite_existing);
         return;
     }
+
+    const size_t merge_factor = 128; // 每轮最多合并128个文件
     
     // 如果chunks数量较少，直接单线程多路归并
-    if (chunks.size() <= 128) {
+    if (chunks.size() <= merge_factor) {
         std::vector<std::string> filenames;
         for (const auto& chunk : chunks) {
             filenames.push_back(chunk.temp_file);
@@ -196,10 +195,9 @@ void ExternalMergeSorter::mergeChunks(const std::vector<ChunkInfo>& chunks) {
     size_t round = 0;   // 合并轮数
     while (current_files.size() > 1) {
         std::vector<std::string> next_round_files; // 下一轮的文件列表
-        const size_t merge_factor = 128; // 每轮最多合并128个文件
         
         // 使用线程池并行处理多个合并任务
-        std::vector<std::future<std::pair<std::vector<std::string>, std::string>>> merge_futures;  // 保存每个合并任务的future，以便等待完成
+        std::vector<std::future<std::string>> futures;  // 保存每个合并任务的future，以便等待完成
         std::vector<std::vector<std::string>> files_groups;  // 每组文件的列表
         std::vector<std::string> intermediate_files;  // 每组合并后的输出文件名
         
@@ -226,23 +224,14 @@ void ExternalMergeSorter::mergeChunks(const std::vector<ChunkInfo>& chunks) {
                                                output_file = std::move(intermediate_files[i])]() {
                 this->mergeFiles(files_group, output_file);
                 // 返回需要删除的源文件列表，生成的中间文件
-                return std::make_pair(std::move(files_group), std::move(output_file));
+                return std::move(output_file);
             });
-            merge_futures.push_back(std::move(future));
+            futures.push_back(std::move(future));
         }
-        
-        // 等待所有并行任务完成，
-        std::vector<std::pair<std::vector<std::string>, std::string>> merge_results;
-        for (auto& future : merge_futures) {
-            merge_results.push_back(future.get());
-        }
-        
-        // 收集结果文件用于下一轮处理,并删除已合并的源文件
-        for (const auto& result : merge_results) {
-            next_round_files.push_back(result.second);
-            for (const auto& file : result.first) {
-                fs::remove(file);
-            }
+
+        // 等待所有并行任务完成，收集结果
+        for (auto& future : futures) {
+            next_round_files.push_back(future.get());
         }
         
         current_files = std::move(next_round_files);
@@ -255,6 +244,28 @@ void ExternalMergeSorter::mergeChunks(const std::vector<ChunkInfo>& chunks) {
     }
 }
 
+// 单线程多路归并多个已排序的文件到输出文件
+// void ExternalMergeSorter::mergeChunks(const std::vector<ChunkInfo>& chunks) {
+//     if (chunks.empty()) {
+//         return;
+//     }
+    
+//     // 如果只有一个文件，直接复制即可
+//     if (chunks.size() == 1) {
+//         fs::copy_file(chunks[0].temp_file, output_file_, fs::copy_options::overwrite_existing);
+//         return;
+//     }
+    
+//     // 直接单线程多路归并
+//     std::vector<std::string> filenames;
+//     for (const auto& chunk : chunks) {
+//         filenames.push_back(chunk.temp_file);
+//     }
+//     mergeFiles(filenames, output_file_);
+//     return;
+// }
+
+// 多路归并多个已排序的文件到输出文件并删除中间排序文件
 void ExternalMergeSorter::mergeFiles(const std::vector<std::string>& files, const std::string& output_file) {
     if (files.empty()) {
         return;
@@ -266,14 +277,15 @@ void ExternalMergeSorter::mergeFiles(const std::vector<std::string>& files, cons
         return;
     }
     
-    // 打开所有输入文件
-    std::vector<std::ifstream> inputs(files.size());
     // 为每个输入文件设置缓冲区
-    const size_t BUFFER_SIZE = memory_limit_ / (files.size() * sizeof(int64_t));
+    const size_t BUFFER_SIZE = memory_limit_ / (files.size() * num_threads_ * sizeof(int64_t));  // 缓冲区大小表示元素数量
+    // std::cout << "每个输入文件缓冲区大小: " << BUFFER_SIZE * sizeof(int64_t) << " B" << std::endl;
     std::vector<std::vector<int64_t>> input_buffers(files.size());
     std::vector<size_t> buffer_positions(files.size(), 0);
     std::vector<size_t> buffer_sizes(files.size(), 0);
-    
+
+    // 打开所有输入文件并初始化缓冲区
+    std::vector<std::ifstream> inputs(files.size());
     for (size_t i = 0; i < files.size(); ++i) {
         inputs[i].open(files[i], std::ios::binary);
         if (!inputs[i].is_open()) {
@@ -318,7 +330,15 @@ void ExternalMergeSorter::mergeFiles(const std::vector<std::string>& files, cons
             // 缓冲区已用完，需要从文件读取新数据
             inputs[stream_index].read(reinterpret_cast<char*>(input_buffers[stream_index].data()), 
                                      BUFFER_SIZE * sizeof(int64_t));
-            buffer_sizes[stream_index] = inputs[stream_index].gcount() / sizeof(int64_t);
+            if (inputs[stream_index].eof() && inputs[stream_index].gcount() == 0) {
+                // 文件已读完，关闭流并删除中间顺序文件
+                buffer_sizes[stream_index] = 0;
+                inputs[stream_index].close();
+                fs::remove(files[stream_index]);
+            } else {
+                // 文件未读完，更新缓冲区大小
+                buffer_sizes[stream_index] = inputs[stream_index].gcount() / sizeof(int64_t);
+            }
             buffer_positions[stream_index] = 0;
         }
     };
