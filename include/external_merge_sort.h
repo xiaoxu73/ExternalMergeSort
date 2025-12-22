@@ -11,8 +11,9 @@ class ExternalMergeSorter {
 public:
     ExternalMergeSorter(const std::string& input_dir, 
                        const std::string& output_file,
-                       size_t memory_limit = 64 * 1024 * 1024); // 默认64MB
-    
+                       size_t memory_limit = 64 * 1024 * 1024,
+                       size_t num_threads = 0); // 默认0表示自动检测CPU核心数
+
     void sort();
 
 private:
@@ -33,6 +34,7 @@ private:
     // 辅助方法
     std::vector<std::string> getAllFiles(const std::string& dir) const;
     void mergeFiles(const std::vector<std::string>& files, const std::string& output_file);
+    const double get_memory_usage_mb();
 
     std::string input_dir_;
     std::string output_file_;

@@ -5,18 +5,35 @@
 #include <filesystem>
 #include <queue>
 #include <cstring>
+#include <sys/resource.h>
 
 namespace fs = std::filesystem;
 
+// 辅助函数，获取当前进程的内存使用情况
+const double ExternalMergeSorter::get_memory_usage_mb() {
+        struct rusage usage;
+        getrusage(RUSAGE_SELF, &usage);
+        return usage.ru_maxrss / 1024.0; // ru_maxrss以KB为单位
+}
+
 ExternalMergeSorter::ExternalMergeSorter(const std::string& input_dir,
                                          const std::string& output_file,
-                                         size_t memory_limit)
+                                         size_t memory_limit,
+                                         size_t num_threads)
     : input_dir_(input_dir), 
       output_file_(output_file),
-      memory_limit_(memory_limit) {
+      memory_limit_(memory_limit),
+      num_threads_(num_threads) {
     // 线程数量等于CPU核心数
-    num_threads_ = std::thread::hardware_concurrency();
-    if (num_threads_ == 0) num_threads_ = 32; // 默认值
+
+    if (num_threads_ < 0) {
+        std::cerr << "线程数小于0则默认不使用多线程加速" << std::endl;
+        return;
+    }
+    else if(num_threads_ == 0){
+        // 使用CPU核心数
+        num_threads_ = std::thread::hardware_concurrency();
+    }
     
     // 创建线程池
     thread_pool_ = std::make_unique<ThreadPool>(num_threads_);
@@ -32,6 +49,7 @@ void ExternalMergeSorter::sort() {
     auto end_time = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
     std::cout << "分割和预排序完成，耗时: " << duration.count() << "ms" << std::endl;
+    std::cout << "内存使用: " << get_memory_usage_mb() << "MB" << std::endl;
     
     std::cout << "开始多路归并阶段..." << std::endl;
     start_time = std::chrono::high_resolution_clock::now();
@@ -41,11 +59,7 @@ void ExternalMergeSorter::sort() {
     end_time = std::chrono::high_resolution_clock::now();
     duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
     std::cout << "多路归并完成，耗时: " << duration.count() << "ms" << std::endl;
-    
-    // 清理临时文件
-    for (const auto& chunk : chunks) {
-        fs::remove(chunk.temp_file);
-    }
+    std::cout << "内存使用: " << get_memory_usage_mb() << "MB" << std::endl;
     
     std::cout << "排序完成，结果保存至: " << output_file_ << std::endl;
 }
@@ -56,7 +70,7 @@ std::vector<ExternalMergeSorter::ChunkInfo> ExternalMergeSorter::splitAndPresort
         return {};
     }
 
-    if (num_threads_ == 0) {
+    if (num_threads_ < 0) {
         // 单线程处理
         std::vector<ChunkInfo> chunks;
         for (const auto& file : files) {
@@ -65,41 +79,35 @@ std::vector<ExternalMergeSorter::ChunkInfo> ExternalMergeSorter::splitAndPresort
         return chunks;
     }
 
-    // 按批次提交任务，避免一次性创建过多future对象，并实现更好的负载均衡
-    const size_t batch_size = std::max(static_cast<size_t>(1), files.size() / (num_threads_ * 2));
-    
+    std::vector<std::future<ChunkInfo>> futures;
+
+    // 并行处理所有文件
+    for (const auto& file : files) {
+        auto future = thread_pool_->submit(&ExternalMergeSorter::processFile, this, file);
+        // 收集所有future
+        futures.push_back(std::move(future));
+    }
+
     std::vector<ChunkInfo> chunks;
-    for (size_t i = 0; i < files.size(); i += batch_size) {
-        size_t end = std::min(i + batch_size, files.size());
-        std::vector<std::future<ChunkInfo>> batch_futures;
-        
-        // 提交一批任务
-        for (size_t j = i; j < end; ++j) {
-            auto future = thread_pool_->submit(&ExternalMergeSorter::processFile, this, files[j]);
-            batch_futures.push_back(std::move(future));
-        }
-        
-        // 等待这批任务完成并收集结果
-        for (auto& future : batch_futures) {
-            chunks.push_back(future.get());
-        }
+    for (auto& future : futures) {
+        chunks.push_back(future.get());
     }
     
     return chunks;
 }
 
 ExternalMergeSorter::ChunkInfo ExternalMergeSorter::processFile(const std::string& filepath) {
-    // 使用一半的内存限制，为其他操作留出空间
-    // size_t max_elements = memory_limit_ / (num_threads_ * sizeof(int64_t));
-    size_t max_elements = memory_limit_ / sizeof(int64_t);
+    // 内存限制
+    size_t max_elements = memory_limit_ / sizeof(int64_t) / (num_threads_ > 0 ? num_threads_ : 1);
     std::vector<int64_t> buffer;
     buffer.reserve(max_elements);
-    
+
     std::ifstream input(filepath, std::ios::binary);
-    if (!input.is_open()) {
+    if (!input.is_open())
+    {
         throw std::runtime_error("无法打开文件: " + filepath);
     }
-    
+
     // 创建主临时文件名
     std::string temp_filename = filepath + ".sorted";
     
@@ -147,6 +155,9 @@ ExternalMergeSorter::ChunkInfo ExternalMergeSorter::processFile(const std::strin
     }
     
     input.close();
+    // 释放缓冲区内存
+    buffer.clear();
+    buffer.shrink_to_fit();
     
     // 合并所有生成的chunk文件
     if (chunk_files.size() == 1) {
@@ -170,6 +181,16 @@ void ExternalMergeSorter::mergeChunks(const std::vector<ChunkInfo>& chunks) {
     // 如果只有一个文件，直接复制即可
     if (chunks.size() == 1) {
         fs::copy_file(chunks[0].temp_file, output_file_, fs::copy_options::overwrite_existing);
+        return;
+    }
+
+    if (num_threads_ < 0) {
+        // 单线程处理
+        std::vector<std::string> filenames;
+        for (const auto& chunk : chunks) {
+            filenames.push_back(chunk.temp_file);
+        }
+        mergeFiles(filenames, output_file_);
         return;
     }
 
@@ -244,26 +265,6 @@ void ExternalMergeSorter::mergeChunks(const std::vector<ChunkInfo>& chunks) {
     }
 }
 
-// 单线程多路归并多个已排序的文件到输出文件
-// void ExternalMergeSorter::mergeChunks(const std::vector<ChunkInfo>& chunks) {
-//     if (chunks.empty()) {
-//         return;
-//     }
-    
-//     // 如果只有一个文件，直接复制即可
-//     if (chunks.size() == 1) {
-//         fs::copy_file(chunks[0].temp_file, output_file_, fs::copy_options::overwrite_existing);
-//         return;
-//     }
-    
-//     // 直接单线程多路归并
-//     std::vector<std::string> filenames;
-//     for (const auto& chunk : chunks) {
-//         filenames.push_back(chunk.temp_file);
-//     }
-//     mergeFiles(filenames, output_file_);
-//     return;
-// }
 
 // 多路归并多个已排序的文件到输出文件并删除中间排序文件
 void ExternalMergeSorter::mergeFiles(const std::vector<std::string>& files, const std::string& output_file) {
@@ -276,10 +277,10 @@ void ExternalMergeSorter::mergeFiles(const std::vector<std::string>& files, cons
         fs::copy_file(files[0], output_file, fs::copy_options::overwrite_existing);
         return;
     }
-    
-    // 为每个输入文件设置缓冲区
-    const size_t BUFFER_SIZE = memory_limit_ / (files.size() * num_threads_ * sizeof(int64_t));  // 缓冲区大小表示元素数量
-    // std::cout << "每个输入文件缓冲区大小: " << BUFFER_SIZE * sizeof(int64_t) << " B" << std::endl;
+
+    // 为每个输入文件设置缓冲区最大元素数，最小为1防止缓冲区为0
+    const size_t BUFFER_SIZE = std::max(memory_limit_ / (files.size() * sizeof(int64_t)) / (num_threads_ > 0 ? num_threads_ : 1),
+                                        static_cast<size_t>(1));
     std::vector<std::vector<int64_t>> input_buffers(files.size());
     std::vector<size_t> buffer_positions(files.size(), 0);
     std::vector<size_t> buffer_sizes(files.size(), 0);
