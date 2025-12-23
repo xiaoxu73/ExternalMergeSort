@@ -2,24 +2,16 @@
 
 该系统用于对海量数据进行外部排序，特别适用于内存受限环境下的大数据处理。
 
-## 项目结构
-
-```
-.
-├── bin/                 # 编译后的可执行文件目录
-│   └── merge_sort_tests # 测试可执行文件
-├── include/             # 头文件目录
-│   ├── external_merge_sort.h  # 外部排序类声明
-│   └── thread_pool.h          # 线程池类声明
-├── src/                 # 源代码目录
-│   ├── external_merge_sort.cpp  # 外部排序类实现
-│   ├── generate_data.cpp        # 测试数据生成器实现
-│   └── thread_pool.cpp          # 线程池类实现
-├── test/                # 测试代码目录
-│   └── merge_sort_test.cpp      # Google Test测试用例
-├── CMakeLists.txt       # CMake构建配置文件
-└── README.md            # 项目说明文档
-```
+## 目录
+- [功能特点](#功能特点)
+- [技术方案](#技术方案)
+- [项目结构](#项目结构)
+- [编译说明](#编译说明)
+- [测试说明](#测试说明)
+- [设计细节](#设计细节)
+- [系统要求](#系统要求)
+- [参数说明](#参数说明)
+- [License](#license)
 
 ## 功能特点
 
@@ -28,6 +20,7 @@
 3. **内存限制友好**: 在小内存环境下也能正常工作
 4. **负载均衡**: 合理分配任务给多个工作线程
 5. **无锁设计**: 最大限度减少线程同步开销
+6. **分层归并**: 支持多轮分层归并，处理大量中间文件
 
 ## 技术方案
 
@@ -45,26 +38,45 @@
 - 粗粒度锁：任务队列操作使用互斥锁
 - 免锁/无锁：数据处理阶段各线程独立工作，无需同步
 
-## 可执行文件说明
+## 项目结构
 
-目前项目提供以下可执行文件：
-
-1. **merge_sort_tests**: 包含完整的测试套件，用于验证系统的正确性和性能
+```
+.
+├── bin/                 # 编译后的可执行文件目录
+│   └── merge_sort_tests # 测试可执行文件
+├── include/             # 头文件目录
+│   ├── external_merge_sort.h  # 外部排序类声明
+│   └── thread_pool.h          # 线程池类声明
+├── src/                 # 源代码目录
+│   ├── external_merge_sort.cpp  # 外部排序类实现
+│   ├── generate_data.cpp        # 测试数据生成器实现
+│   └── thread_pool.cpp          # 线程池类实现
+├── test/                # 测试代码目录
+│   └── merge_sort_test.cpp      # Google Test测试用例
+├── CMakeLists.txt       # CMake构建配置文件
+├── README.md            # 项目说明文档
+└── LICENSE              # 项目开源许可证
+```
 
 ## 编译说明
 
-### 方法一：使用 Make
-```bash
-make
-```
-
-### 方法二：使用 CMake
+### 使用 CMake
 ```bash
 mkdir build
 cd build
 cmake ..
 make
 ```
+
+### 构建类型
+- **Release**: 默认构建类型，优化性能
+  ```bash
+  cmake -DCMAKE_BUILD_TYPE=Release .. && make
+  ```
+- **Debug**: 含调试符号，便于调试
+  ```bash
+  cmake -DCMAKE_BUILD_TYPE=Debug .. && make
+  ```
 
 ## 测试说明
 
@@ -80,14 +92,14 @@ make
 
 ### 运行测试
 
-使用 Make 运行测试：
-```bash
-make test
-```
-
-或者直接运行测试可执行文件：
+直接运行测试可执行文件：
 ```bash
 ./bin/merge_sort_tests
+```
+
+或者使用特定测试过滤器运行特定测试：
+```bash
+./bin/merge_sort_tests --gtest_filter="*LargeDataTest*"
 ```
 
 每个测试用例都会输出详细的信息，包括：
@@ -111,6 +123,7 @@ make test
 - 减少不必要的数据复制
 - 使用二进制文件格式提高IO效率
 - 采用高效的STL排序算法
+- 分层归并策略，每轮最多合并128个文件
 
 ## 系统要求
 
@@ -122,7 +135,11 @@ make test
 ## 参数说明
 
 ### 内存限制
-默认使用64MB内存，可通过命令行参数调整。实际使用中会根据该值动态计算每次处理的数据量。
+默认使用64MB内存，可通过代码参数调整。实际使用中会根据该值动态计算每次处理的数据量。
 
 ### 文件格式
 所有数据文件均为二进制格式，每个数据占8字节（64位有符号整数）。
+
+## License
+
+本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件。
