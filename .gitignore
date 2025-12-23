@@ -9,6 +9,7 @@
 # 构建目录
 build/
 cmake-build-*/
+bin/
 
 # 测试相关
 test_data*/
