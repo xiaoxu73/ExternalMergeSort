@@ -64,8 +64,9 @@ void ExternalMergeSorter::sort() {
     std::cout << "排序完成，结果保存至: " << output_file_ << std::endl;
 }
 
+// 第一阶段：分割和预排序
 std::vector<ExternalMergeSorter::ChunkInfo> ExternalMergeSorter::splitAndPresort() {
-    auto files = getAllFiles(input_dir_);
+    auto files = getAllFiles(input_dir_); // 获取所有文件
     if (files.empty()) {
         return {};
     }
@@ -88,6 +89,7 @@ std::vector<ExternalMergeSorter::ChunkInfo> ExternalMergeSorter::splitAndPresort
         futures.push_back(std::move(future));
     }
 
+    // 等待所有future完成，收集结果
     std::vector<ChunkInfo> chunks;
     for (auto& future : futures) {
         chunks.push_back(future.get());
@@ -312,19 +314,7 @@ void ExternalMergeSorter::mergeFiles(const std::vector<std::string>& files, cons
     
     std::vector<int64_t> output_buffer;
     output_buffer.reserve(BUFFER_SIZE);
-    
-    // 使用最小堆进行k路归并
-    struct Element {
-        int64_t value;
-        size_t stream_index;
-        
-        bool operator>(const Element& other) const {
-            return value > other.value;
-        }
-    };
-    
-    std::priority_queue<Element, std::vector<Element>, std::greater<Element>> min_heap;
-    
+
     // 缓冲区填充函数
     auto fillBuffer = [&](size_t stream_index) {
         if (buffer_positions[stream_index] >= buffer_sizes[stream_index]) {
@@ -343,6 +333,18 @@ void ExternalMergeSorter::mergeFiles(const std::vector<std::string>& files, cons
             buffer_positions[stream_index] = 0;
         }
     };
+    
+    // 使用最小堆进行k路归并
+    struct Element {
+        int64_t value;
+        size_t stream_index;
+        
+        bool operator>(const Element& other) const {
+            return value > other.value;
+        }
+    };
+    
+    std::priority_queue<Element, std::vector<Element>, std::greater<Element>> min_heap;
     
     // 初始化堆，从每个文件读取第一个元素
     for (size_t index = 0; index < files.size(); ++index) {

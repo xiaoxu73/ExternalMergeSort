@@ -12,7 +12,9 @@ namespace fs = std::filesystem;
 
 void generate_test_data(const std::string& dir, size_t num_files, size_t total_gb) {
     // 创建目录
-    fs::create_directories(dir);
+    if (!fs::exists(dir)) {
+        fs::create_directories(dir);
+    }
     
     // 计算总数据量(以int64_t为单位)
     size_t total_elements = (total_gb * 1024ULL * 1024ULL * 1024ULL) / sizeof(int64_t);

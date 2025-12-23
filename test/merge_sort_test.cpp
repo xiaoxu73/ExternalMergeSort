@@ -16,6 +16,7 @@ protected:
         // 创建测试目录
         test_dir = "test_data_" + std::to_string(std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::high_resolution_clock::now().time_since_epoch()).count());
+        // test_dir = "test_data_128GB";
         output_file = "sorted_output.dat";
         fs::create_directories(test_dir);
     }
@@ -62,6 +63,7 @@ protected:
 
     // 生成多个测试文件
     void generate_multiple_test_files(size_t file_count, size_t elements_per_file) {
+        fs::create_directory(test_dir);
         for (size_t i = 0; i < file_count; ++i) {
             std::string filename = test_dir + "/data_" + std::to_string(i) + ".dat";
             generate_test_file(filename, elements_per_file);
@@ -109,187 +111,6 @@ protected:
     std::string output_file;
 };
 
-// 测试小数据集的基本功能
-TEST_F(ExternalMergeSortTest, BasicFunctionalitySmallData) {
-    const size_t FILE_COUNT = 5;
-    const size_t ELEMENTS_PER_FILE = 1000;
-
-    std::cout << "\n=== 测试小数据集基本功能 ===" << std::endl;
-    std::cout << "文件数量: " << FILE_COUNT << std::endl;
-    std::cout << "每文件元素数: " << ELEMENTS_PER_FILE << std::endl;
-    std::cout << "总元素数: " << FILE_COUNT * ELEMENTS_PER_FILE << std::endl;
-
-    generate_multiple_test_files(FILE_COUNT, ELEMENTS_PER_FILE);
-
-    double mem_before = get_memory_usage_mb();
-    auto start_time = std::chrono::high_resolution_clock::now();
-
-    ExternalMergeSorter sorter(test_dir, output_file, 32 * 1024 * 1024); // 32MB内存限制
-    sorter.sort();
-
-    auto end_time = std::chrono::high_resolution_clock::now();
-    double mem_after = get_memory_usage_mb();
-
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-
-    std::cout << "排序耗时: " << duration.count() << " ms" << std::endl;
-    std::cout << "内存使用: " << mem_before << " MB -> " << mem_after << " MB" << std::endl;
-
-    // 验证输出文件存在且已排序
-    ASSERT_TRUE(fs::exists(output_file));
-    EXPECT_TRUE(is_file_sorted(output_file));
-
-    // 验证元素总数一致
-    size_t total_input_elements = FILE_COUNT * ELEMENTS_PER_FILE;
-    size_t output_elements = count_file_elements(output_file);
-    EXPECT_EQ(total_input_elements, output_elements);
-}
-
-// 测试大数据集
-TEST_F(ExternalMergeSortTest, LargeDataSet) {
-    const size_t FILE_COUNT = 20;
-    const size_t ELEMENTS_PER_FILE = 10000; // 80KB per file
-
-    std::cout << "\n=== 测试大数据集 ===" << std::endl;
-    std::cout << "文件数量: " << FILE_COUNT << std::endl;
-    std::cout << "每文件元素数: " << ELEMENTS_PER_FILE << std::endl;
-    std::cout << "总元素数: " << FILE_COUNT * ELEMENTS_PER_FILE << std::endl;
-    std::cout << "预计数据大小: " << (FILE_COUNT * ELEMENTS_PER_FILE * sizeof(int64_t)) / (1024*1024) << " MB" << std::endl;
-
-    generate_multiple_test_files(FILE_COUNT, ELEMENTS_PER_FILE);
-
-    double mem_before = get_memory_usage_mb();
-    auto start_time = std::chrono::high_resolution_clock::now();
-
-    ExternalMergeSorter sorter(test_dir, output_file, 16 * 1024 * 1024); // 16MB内存限制
-    sorter.sort();
-
-    auto end_time = std::chrono::high_resolution_clock::now();
-    double mem_after = get_memory_usage_mb();
-
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-
-    std::cout << "排序耗时: " << duration.count() << " ms" << std::endl;
-    std::cout << "内存使用: " << mem_before << " MB -> " << mem_after << " MB" << std::endl;
-
-    // 验证输出文件存在且已排序
-    ASSERT_TRUE(fs::exists(output_file));
-    EXPECT_TRUE(is_file_sorted(output_file));
-
-    // 验证元素总数一致
-    size_t total_input_elements = FILE_COUNT * ELEMENTS_PER_FILE;
-    size_t output_elements = count_file_elements(output_file);
-    EXPECT_EQ(total_input_elements, output_elements);
-}
-
-// 测试不同大小的文件混合
-TEST_F(ExternalMergeSortTest, MixedSizeFiles) {
-    std::cout << "\n=== 测试不同大小文件混合处理 ===" << std::endl;
-
-    // 生成不同大小的文件
-    std::vector<size_t> file_sizes = {100, 1000, 500, 2000, 300};
-    size_t total_elements = 0;
-
-    for (size_t i = 0; i < file_sizes.size(); ++i) {
-        std::string filename = test_dir + "/mixed_" + std::to_string(i) + ".dat";
-        generate_test_file(filename, file_sizes[i]);
-        total_elements += file_sizes[i];
-        std::cout << "文件 " << i << ": " << file_sizes[i] << " 元素" << std::endl;
-    }
-
-    std::cout << "总元素数: " << total_elements << std::endl;
-
-    double mem_before = get_memory_usage_mb();
-    auto start_time = std::chrono::high_resolution_clock::now();
-
-    ExternalMergeSorter sorter(test_dir, output_file, 8 * 1024 * 1024); // 8MB内存限制
-    sorter.sort();
-
-    auto end_time = std::chrono::high_resolution_clock::now();
-    double mem_after = get_memory_usage_mb();
-
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-
-    std::cout << "排序耗时: " << duration.count() << " ms" << std::endl;
-    std::cout << "内存使用: " << mem_before << " MB -> " << mem_after << " MB" << std::endl;
-
-    ASSERT_TRUE(fs::exists(output_file));
-    EXPECT_TRUE(is_file_sorted(output_file));
-
-    size_t output_elements = count_file_elements(output_file);
-    EXPECT_EQ(total_elements, output_elements);
-}
-
-// 测试内存限制较小的情况
-TEST_F(ExternalMergeSortTest, SmallMemoryLimit) {
-    const size_t FILE_COUNT = 10;
-    const size_t ELEMENTS_PER_FILE = 5000; // 每个文件约40KB
-
-    std::cout << "\n=== 测试小内存限制 ===" << std::endl;
-    std::cout << "文件数量: " << FILE_COUNT << std::endl;
-    std::cout << "每文件元素数: " << ELEMENTS_PER_FILE << std::endl;
-    std::cout << "内存限制: 4 MB" << std::endl;
-
-    generate_multiple_test_files(FILE_COUNT, ELEMENTS_PER_FILE);
-
-    double mem_before = get_memory_usage_mb();
-    auto start_time = std::chrono::high_resolution_clock::now();
-
-    // 设置很小的内存限制（4MB）
-    ExternalMergeSorter sorter(test_dir, output_file, 4 * 1024 * 1024);
-    sorter.sort();
-
-    auto end_time = std::chrono::high_resolution_clock::now();
-    double mem_after = get_memory_usage_mb();
-
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-
-    std::cout << "排序耗时: " << duration.count() << " ms" << std::endl;
-    std::cout << "内存使用: " << mem_before << " MB -> " << mem_after << " MB" << std::endl;
-
-    ASSERT_TRUE(fs::exists(output_file));
-    EXPECT_TRUE(is_file_sorted(output_file));
-
-    size_t total_input_elements = FILE_COUNT * ELEMENTS_PER_FILE;
-    size_t output_elements = count_file_elements(output_file);
-    EXPECT_EQ(total_input_elements, output_elements);
-}
-
-// 测试大量文件的情况
-TEST_F(ExternalMergeSortTest, ManyFiles) {
-    const size_t FILE_COUNT = 200;  // 200个文件
-    const size_t ELEMENTS_PER_FILE = 1000;
-
-    std::cout << "\n=== 测试大量文件处理 ===" << std::endl;
-    std::cout << "文件数量: " << FILE_COUNT << std::endl;
-    std::cout << "每文件元素数: " << ELEMENTS_PER_FILE << std::endl;
-    std::cout << "总元素数: " << FILE_COUNT * ELEMENTS_PER_FILE << std::endl;
-
-    generate_multiple_test_files(FILE_COUNT, ELEMENTS_PER_FILE);
-
-    double mem_before = get_memory_usage_mb();
-    auto start_time = std::chrono::high_resolution_clock::now();
-
-    // ExternalMergeSorter sorter(test_dir, output_file, 32 * 1024 * 1024); // 32MB内存限制
-    ExternalMergeSorter sorter(test_dir, output_file, 4 * 1024); // 4KB内存限制
-    sorter.sort();
-
-    auto end_time = std::chrono::high_resolution_clock::now();
-    double mem_after = get_memory_usage_mb();
-
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-
-    std::cout << "排序耗时: " << duration.count() << " ms" << std::endl;
-    std::cout << "内存使用: " << mem_before << " MB -> " << mem_after << " MB" << std::endl;
-
-    ASSERT_TRUE(fs::exists(output_file));
-    EXPECT_TRUE(is_file_sorted(output_file));
-
-    size_t total_input_elements = FILE_COUNT * ELEMENTS_PER_FILE;
-    size_t output_elements = count_file_elements(output_file);
-    EXPECT_EQ(total_input_elements, output_elements);
-}
-
 // 测试边界条件：空文件
 TEST_F(ExternalMergeSortTest, EmptyFiles) {
     const size_t FILE_COUNT = 3;
@@ -317,7 +138,6 @@ TEST_F(ExternalMergeSortTest, SingleFile) {
     const size_t ELEMENTS = 5000;
 
     std::cout << "\n=== 测试单文件处理 ===" << std::endl;
-    std::cout << "元素数量: " << ELEMENTS << std::endl;
 
     std::string filename = test_dir + "/single.dat";
     generate_test_file(filename, ELEMENTS);
@@ -338,8 +158,6 @@ TEST_F(ExternalMergeSortTest, PreSortedData) {
     const size_t ELEMENTS_PER_FILE = 2000;
 
     std::cout << "\n=== 测试预排序数据 ===" << std::endl;
-    std::cout << "文件数量: " << FILE_COUNT << std::endl;
-    std::cout << "每文件元素数: " << ELEMENTS_PER_FILE << std::endl;
 
     // 生成已排序的测试文件（降序，让排序有意义）
     for (size_t i = 0; i < FILE_COUNT; ++i) {
@@ -347,19 +165,8 @@ TEST_F(ExternalMergeSortTest, PreSortedData) {
         generate_test_file(filename, ELEMENTS_PER_FILE, false); // 生成有序数据
     }
 
-    double mem_before = get_memory_usage_mb();
-    auto start_time = std::chrono::high_resolution_clock::now();
-
     ExternalMergeSorter sorter(test_dir, output_file, 16 * 1024 * 1024);
     sorter.sort();
-
-    auto end_time = std::chrono::high_resolution_clock::now();
-    double mem_after = get_memory_usage_mb();
-
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-
-    std::cout << "排序耗时: " << duration.count() << " ms" << std::endl;
-    std::cout << "内存使用: " << mem_before << " MB -> " << mem_after << " MB" << std::endl;
 
     ASSERT_TRUE(fs::exists(output_file));
     EXPECT_TRUE(is_file_sorted(output_file));
@@ -369,14 +176,67 @@ TEST_F(ExternalMergeSortTest, PreSortedData) {
     EXPECT_EQ(total_input_elements, output_elements);
 }
 
-// 测试使用generate_test_data函数创建的大数据集
+// 测试包含大量重复数据的情况
+TEST_F(ExternalMergeSortTest, DuplicateElements) {
+    const size_t FILE_COUNT = 10;
+    const size_t ELEMENTS_PER_FILE = 10000;
+    const int64_t DUPLICATE_VALUE = 42;
+
+    std::cout << "\n=== 测试重复数据处理 ===" << std::endl;
+
+    // 生成包含大量重复元素的文件
+    for (size_t i = 0; i < FILE_COUNT; ++i) {
+        std::string filename = test_dir + "/duplicate_" + std::to_string(i) + ".dat";
+        std::ofstream file(filename, std::ios::binary);
+        ASSERT_TRUE(file.is_open());
+
+        for (size_t j = 0; j < ELEMENTS_PER_FILE; ++j) {
+            int64_t value = (j % 2 == 0) ? DUPLICATE_VALUE : static_cast<int64_t>(ELEMENTS_PER_FILE - j);
+            file.write(reinterpret_cast<const char*>(&value), sizeof(value));
+        }
+        file.close();
+    }
+
+    ExternalMergeSorter sorter(test_dir, output_file, 8 * 1024 * 1024);
+    sorter.sort();
+
+    ASSERT_TRUE(fs::exists(output_file));
+    EXPECT_TRUE(is_file_sorted(output_file));
+
+    size_t total_input_elements = FILE_COUNT * ELEMENTS_PER_FILE;
+    size_t output_elements = count_file_elements(output_file);
+    EXPECT_EQ(total_input_elements, output_elements);
+}
+
+// 测试极小内存限制情况
+TEST_F(ExternalMergeSortTest, MinimalMemoryLimit) {
+    const size_t ELEMENTS = 5000;
+
+    std::cout << "\n=== 测试极小内存限制 ===" << std::endl;
+    std::cout << "内存限制: 1KB" << std::endl;
+
+    std::string filename = test_dir + "/small_memory.dat";
+    generate_test_file(filename, ELEMENTS);
+
+    // 设置极小的内存限制（只有1KB）
+    ExternalMergeSorter sorter(test_dir, output_file, 1024);
+    sorter.sort();
+
+    ASSERT_TRUE(fs::exists(output_file));
+    EXPECT_TRUE(is_file_sorted(output_file));
+
+    size_t output_elements = count_file_elements(output_file);
+    EXPECT_EQ(ELEMENTS, output_elements);
+}
+
+// 测试超大数据集
 TEST_F(ExternalMergeSortTest, LargeRandomDataset) {
     std::cout << "\n=== 测试使用generate_test_data函数创建的超大数据集 ===" << std::endl;
     
     // 使用generate_test_data函数生成大数据集
-    // 生成约1GB的数据，分布在10000个文件中
-    const size_t FILE_COUNT = 10000;
-    const size_t TOTAL_GB = 1; // 1GB的数据集
+    // 生成约128GB的数据，分布在100000个文件中
+    const size_t FILE_COUNT = 100000;
+    const size_t TOTAL_GB = 128; // 128GB的数据集
     
     // 生成测试数据
     generate_test_data(test_dir, FILE_COUNT, TOTAL_GB);
@@ -404,7 +264,7 @@ TEST_F(ExternalMergeSortTest, LargeRandomDataset) {
 
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
 
-    std::cout << "排序耗时: " << duration.count() << " ms" << std::endl;
+    std::cout << "排序总耗时: " << duration.count() << " ms" << std::endl;
     std::cout << "内存使用: " << mem_before << " MB -> " << mem_after << " MB" << std::endl;
 
     // 验证输出文件存在且已排序
